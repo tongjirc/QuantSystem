@@ -46,6 +46,7 @@ config/*.pyc
 *.parquet
 *.h5
 *.pkl
+data/
 
 # 日志
 *.log

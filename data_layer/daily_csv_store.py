@@ -73,3 +73,45 @@ def load_daily(
     df = df.set_index("trade_date")
     return df
 
+
+def build_price_panel(
+    ts_codes: list[str],
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    raw_dir: Optional[str] = None,
+    price_col: str = "close",
+) -> pd.DataFrame:
+    """
+    Build aligned panel: index = trade_date, columns = ts_code, values = close.
+    Missing dates/stocks left as NaN.
+    """
+    raw_dir = raw_dir or default_raw_dir()
+    dfs: list[pd.DataFrame] = []
+    for ts_code in ts_codes:
+        try:
+            df = load_daily(ts_code, raw_dir=raw_dir, start_date=start_date, end_date=end_date, columns=[price_col])
+            if df.empty:
+                continue
+            df = df[[price_col]].rename(columns={price_col: ts_code})
+            dfs.append(df)
+        except Exception:
+            continue
+    if not dfs:
+        return pd.DataFrame()
+    panel = pd.concat(dfs, axis=1)
+    panel = panel.sort_index()
+    return panel
+
+
+def build_returns_panel(
+    ts_codes: list[str],
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    raw_dir: Optional[str] = None,
+) -> pd.DataFrame:
+    """Daily returns panel (pct_change on close). Index=date, columns=ts_code."""
+    prices = build_price_panel(ts_codes, start_date=start_date, end_date=end_date, raw_dir=raw_dir)
+    if prices.empty:
+        return pd.DataFrame()
+    return prices.pct_change()
+

@@ -6,17 +6,19 @@ cd "$ROOT_DIR"
 
 usage() {
   cat <<EOF
-Usage: run [-l | -d | -p]
-  -l, --download
-               只做数据增量下载
-  -d, --dev    开发模式：先下载数据，再对单只标的跑回测示例
-  -p, --prod   生产模式：先下载数据，再生成当天全市场信号（暂不发飞书）
+Usage: run [-l | -d | -p | -b]
+  -l, --download    只做数据增量下载
+  -d, --dev         开发模式：先下载，再单只标的回测示例
+  -p, --prod        生产模式：先下载，再当日全市场信号
+  -b, --backtest    组合回测：先下载，再动量组合回测+可视化（--plot 可弹窗看图）
 
 示例：
   ./run.sh -l
   ./run.sh -d
   ./run.sh -p
-  ./run.sh           # 仅激活虚拟环境
+  ./run.sh -b              # 组合回测，图保存到 data/backtest/
+  ./run.sh -b -- --plot    # 组合回测并弹窗显示图
+  ./run.sh                 # 仅激活虚拟环境
 EOF
 }
 
@@ -46,8 +48,13 @@ case "$MODE" in
   -p|--prod)
     source venv/bin/activate
     python downloader/csi500_daily_downloader.py
-    # 只在终端打印当日建议（如需 Feishu 推送，可在命令后加 --send）
     python -m pipeline.prod_daily_signal
+    ;;
+
+  -b|--backtest)
+    source venv/bin/activate
+    python downloader/csi500_daily_downloader.py
+    python -m pipeline.portfolio_backtest --save-only "${@:2}"
     ;;
 
   -h|--help)
