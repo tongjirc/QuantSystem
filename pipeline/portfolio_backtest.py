@@ -28,7 +28,12 @@ from config.settings import (
     TREND_FAST_MA,
     TREND_SLOW_MA,
 )
-from data_layer.daily_csv_store import build_price_panel, list_available_ts_codes, default_raw_dir
+from data_layer.daily_csv_store import (
+    build_adj_price_panel,
+    build_price_panel,
+    list_available_ts_codes,
+    default_raw_dir,
+)
 
 
 def _drawdown(equity: pd.Series) -> pd.Series:
@@ -37,7 +42,7 @@ def _drawdown(equity: pd.Series) -> pd.Series:
 
 
 def main():
-    p = argparse.ArgumentParser(description="Portfolio backtest: momentum Top-N + allocation + technical filters")
+    p = argparse.ArgumentParser(description="Portfolio backtest: multi-strategy Top-N + allocation")
     p.add_argument("--start", default=BACKTEST_DEFAULT_START, help="Start date YYYYMMDD")
     p.add_argument("--end", default=BACKTEST_DEFAULT_END, help="End date YYYYMMDD")
     p.add_argument("--top-n", type=int, default=TOP_N)
@@ -61,6 +66,27 @@ def main():
         default=REBALANCE_DAYS,
         help="Rebalance frequency in trading days (e.g. 20 ~ monthly)",
     )
+    p.add_argument(
+        "--price-mode",
+        choices=["raw", "adj"],
+        default="adj",
+        help="Use raw close ('raw') or forward-adjusted price built from adj_factor ('adj')",
+    )
+    p.add_argument(
+        "--strategy",
+        default="momentum",
+        choices=[
+            "momentum",
+            "macd",
+            "bollinger",
+            "intraday_breakout",
+            "rsi",
+            "multi_factor",
+            "multi_factor_board",
+            "voting",
+        ],
+        help="Strategy name",
+    )
     p.add_argument("--plot", action="store_true", help="Show and save plot")
     p.add_argument("--save-only", action="store_true", help="Save plot to file only (no display)")
     p.add_argument("--out-dir", default=None, help="Directory to save plot (default: data/backtest)")
@@ -71,7 +97,10 @@ def main():
         raise SystemExit("No raw data found. Run download first (e.g. ./run.sh -l).")
 
     raw_dir = default_raw_dir()
-    prices = build_price_panel(ts_codes, start_date=args.start, end_date=args.end, raw_dir=raw_dir)
+    if args.price_mode == "adj":
+        prices = build_adj_price_panel(ts_codes, start_date=args.start, end_date=args.end, raw_dir=raw_dir)
+    else:
+        prices = build_price_panel(ts_codes, start_date=args.start, end_date=args.end, raw_dir=raw_dir)
     if prices.empty or len(prices) < args.lookback + args.skip_last + 10:
         raise SystemExit("Price panel too short. Check date range and data.")
 
@@ -88,6 +117,7 @@ def main():
         max_gross=args.max_gross,
         fee_bps=args.fee_bps,
         rebalance_days=args.rebalance_days,
+        strategy=args.strategy,
     )
 
     if res.equity.empty:

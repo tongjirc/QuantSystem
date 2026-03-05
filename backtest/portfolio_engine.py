@@ -22,7 +22,7 @@ from config.settings import (
     TREND_FAST_MA,
     TREND_SLOW_MA,
 )
-from strategies.momentum_portfolio import compute_target_weights
+from strategies.strategy_registry import get_strategy_fn
 
 
 @dataclass
@@ -48,6 +48,7 @@ def run_portfolio_backtest(
     max_gross: float = MAX_GROSS,
     fee_bps: float = FEE_BPS,
     rebalance_days: int = REBALANCE_DAYS,
+    strategy: str = "momentum",
     initial_capital: float = 1.0,
 ) -> PortfolioBacktestResult:
     """
@@ -56,7 +57,8 @@ def run_portfolio_backtest(
     - 返回净值曲线、日收益、换手、权重历史。
     """
     prices = prices.sort_index()
-    returns = prices.pct_change(fill_method=None).fillna(0.0)
+    # 更稳健的收益计算：不全局填 0，逐日按可用价格变化计算
+    returns = prices.pct_change(fill_method=None)
     trading_days = prices.index.tolist()
     if len(trading_days) < lookback + skip_last + 2:
         empty_equity = pd.Series(dtype=float)
@@ -77,10 +79,12 @@ def run_portfolio_backtest(
     weight_list: list[pd.Series] = []
     dates_used: list[pd.Timestamp] = []
 
+    strategy_fn = get_strategy_fn(strategy)
+
     for i in range(start_idx, len(trading_days)):
         t = trading_days[i]
         prices_through_t = prices.loc[:t]
-        w = compute_target_weights(
+        w = strategy_fn(
             prices_through_t,
             top_n=top_n,
             min_score=min_score,
@@ -110,9 +114,13 @@ def run_portfolio_backtest(
         t = dates_used[i]
         w_target = weights_df.loc[t]
 
-        # 当日收益：用上一日权重（w_prev）乘当日收益
-        ret_t = returns.loc[t].fillna(0.0)
-        r_t = float(w_prev.dot(ret_t))
+        # 当日收益：用上一日权重（w_prev）乘当日收益（忽略当日无价格变化的标的）
+        ret_t = returns.loc[t]
+        mask = ret_t.notna()
+        if mask.any():
+            r_t = float((w_prev[mask] * ret_t[mask]).sum())
+        else:
+            r_t = 0.0
 
         # 调仓逻辑：每 rebalance_days 个交易日才把组合权重对齐到最新目标
         if i == 0 or (rebalance_days > 0 and i % rebalance_days == 0):
@@ -133,8 +141,9 @@ def run_portfolio_backtest(
     equity = (1.0 + r_port).cumprod() * initial_capital
     equity.name = "equity"
 
-    # 等权基准（全市场等权）
-    ret_ew = returns.loc[dates_used].mean(axis=1)
+    # 等权基准（全市场等权）：仅在有价格变化的标的上取简单平均
+    ret_slice = returns.loc[dates_used]
+    ret_ew = ret_slice.mean(axis=1, skipna=True)
     benchmark_equity = (1.0 + ret_ew).cumprod() * initial_capital
     benchmark_equity.name = "benchmark_ew"
 

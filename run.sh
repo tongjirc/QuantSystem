@@ -24,37 +24,44 @@ EOF
 
 MODE="${1:-}"
 
-# 默认行为：仅激活虚拟环境
-if [[ -z "$MODE" ]]; then
-  source venv/bin/activate
-  echo "Virtualenv activated. You are now in quant_system venv."
-  return 0 2>/dev/null || exit 0
-fi
+source venv/bin/activate
 
 case "$MODE" in
 
   -l|--download)
-    source venv/bin/activate
-    python downloader/csi500_daily_downloader.py
+    # 激活虚拟环境（始终从项目根目录下的 venv）
+    source "$ROOT_DIR/venv/bin/activate"
+    # 使用直连方式调用 AkShare，避免本机代理干扰
+    env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY NO_PROXY="*" \
+      python downloader/csi500_daily_downloader.py
+    # 下载前复权因子（Tushare adj_factor），用于构建前复权价格
+    python downloader/adj_factor_downloader.py
     ;;
 
   -d|--dev)
-    source venv/bin/activate
-    python downloader/csi500_daily_downloader.py
+    source "$ROOT_DIR/venv/bin/activate"
+    env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY NO_PROXY="*" \
+      python downloader/csi500_daily_downloader.py
+    python downloader/adj_factor_downloader.py
     # 示例：对 600519.SH 跑一个 MA20/60 回测
     python -m pipeline.dev_backtest --ts-code 600519.SH
     ;;
 
   -p|--prod)
-    source venv/bin/activate
-    python downloader/csi500_daily_downloader.py
+    source "$ROOT_DIR/venv/bin/activate"
+    env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY NO_PROXY="*" \
+      python downloader/csi500_daily_downloader.py
+    python downloader/adj_factor_downloader.py
     python -m pipeline.prod_daily_signal
     ;;
 
   -b|--backtest)
-    source venv/bin/activate
-    python downloader/csi500_daily_downloader.py
-    python -m pipeline.portfolio_backtest --save-only "${@:2}"
+    source "$ROOT_DIR/venv/bin/activate"
+    env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY NO_PROXY="*" \
+      python downloader/csi500_daily_downloader.py
+    python downloader/adj_factor_downloader.py
+    # 默认使用前复权价格（--price-mode adj），其余参数允许从命令行透传
+    python -m pipeline.portfolio_backtest --price-mode adj --save-only "${@:2}"
     ;;
 
   -h|--help)

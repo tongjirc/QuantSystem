@@ -17,6 +17,8 @@ from config.settings import (
     MAX_WEIGHT,
     MIN_PRICE_FILTER,
     MIN_TECH_SCORE,
+    MOMENTUM_LONG_LOOKBACK,
+    MOMENTUM_MID_LOOKBACK,
     MOMENTUM_LOOKBACK,
     MOMENTUM_SKIP_LAST,
     RSI_LOWER,
@@ -37,15 +39,12 @@ from config.settings import (
 
 
 # ---------- 信号层：单票动量 + 趋势 ----------
-def momentum_score(
+def _window_momentum(
     close: pd.Series,
-    lookback: int = MOMENTUM_LOOKBACK,
-    skip_last: int = MOMENTUM_SKIP_LAST,
+    lookback: int,
+    skip_last: int,
 ) -> float:
-    """
-    动量得分：过去 (lookback - skip_last) 日收益，跳过最近 skip_last 日（减轻反转）。
-    lookback=126≈6月, skip_last=21≈1月 → 相当于 5 个月动量。
-    """
+    """给定窗口的简单价格动量：过去 (lookback - skip_last) 日收益，跳过最近 skip_last 日。"""
     if close is None or len(close) < lookback + skip_last:
         return np.nan
     close = close.dropna()
@@ -58,6 +57,39 @@ def momentum_score(
     if p_start <= 0:
         return np.nan
     return float(p_end / p_start - 1.0)
+
+
+def momentum_score(
+    close: pd.Series,
+    lookback: int = MOMENTUM_LOOKBACK,
+    skip_last: int = MOMENTUM_SKIP_LAST,
+) -> float:
+    """
+    动量得分（兼容旧接口）：
+    - 默认仍然使用单窗口 lookback；
+    - multi_factor 等场景可直接调用更丰富的多窗口动量。
+    """
+    return _window_momentum(close, lookback=lookback, skip_last=skip_last)
+
+
+def dual_momentum_score(
+    close: pd.Series,
+    mid_lookback: int = MOMENTUM_MID_LOOKBACK,
+    long_lookback: int = MOMENTUM_LONG_LOOKBACK,
+    skip_last: int = MOMENTUM_SKIP_LAST,
+) -> float:
+    """
+    中长期动量组合因子：
+    - 中期：例如 6 个月动量
+    - 长期：例如 12 个月动量
+    最终得分为两者的简单平均（也可在 settings 里扩展为不同权重）。
+    """
+    m_mid = _window_momentum(close, lookback=mid_lookback, skip_last=skip_last)
+    m_long = _window_momentum(close, lookback=long_lookback, skip_last=skip_last)
+    if np.isnan(m_mid) and np.isnan(m_long):
+        return np.nan
+    vals = [x for x in (m_mid, m_long) if not np.isnan(x)]
+    return float(sum(vals) / len(vals))
 
 
 def trend_ok(close: pd.Series, fast: int = TREND_FAST_MA, slow: int = TREND_SLOW_MA) -> bool:
@@ -178,8 +210,8 @@ def signal_layer_one(
     fast: int = TREND_FAST_MA,
     slow: int = TREND_SLOW_MA,
 ) -> tuple[float, bool, float]:
-    """单只股票：返回 (momentum_score, trend_ok, tech_score)。"""
-    score = momentum_score(close, lookback=lookback, skip_last=skip_last)
+    """单只股票：返回 (中长期动量得分, trend_ok, tech_score)。"""
+    score = dual_momentum_score(close, mid_lookback=MOMENTUM_MID_LOOKBACK, long_lookback=MOMENTUM_LONG_LOOKBACK, skip_last=skip_last)
     ok = trend_ok(close, fast=fast, slow=slow)
     tech = technical_score(close)
     return (score, ok, tech)
